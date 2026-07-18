@@ -1,95 +1,157 @@
-# Drought Severity Classification: Indonesia
+# Bushfire Warning Classification: Perth, Western Australia
 
-Klasifikasi biner tingkat keparahan kekeringan di Indonesia (**mild** vs **severe**) berbasis variabel meteorologi **TerraClimate**, mengikuti alur **CRISP-DM**. Fokus utama: **feature engineering berbasis domain knowledge hidrologi** dan penanganan **class imbalance** yang sadar terhadap *data leakage*.
+> Multi-class machine learning untuk memprediksi **tingkat peringatan bushfire** (Advice, Watch and Act, Emergency Warning) berdasarkan kondisi meteorologi, kekeringan, vegetasi, dan topografi di Perth, Western Australia.
+>
+> Proyek ini merupakan **pengembangan (development & extension)** di atas paper acuan **Utamima, Kanedi & Sohel (2026)** yang terbit di *Environmental Challenges*, dengan dua kontribusi orisinal: **custom feature engineering (feature creation)** dan **implementasi SMOTE buatan sendiri (from-scratch)** untuk menangani class imbalance.
 
-## 📊 Dataset
+![status](https://img.shields.io/badge/status-completed-success)
+![python](https://img.shields.io/badge/Python-3.x-blue)
+![platform](https://img.shields.io/badge/platform-Google%20Colab-orange)
+![methodology](https://img.shields.io/badge/methodology-CRISP--DM-informational)
+![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-- **Sumber:** [TerraClimate](https://www.climatologylab.org/terraclimate.html), Climatology Lab (diakses via Google Earth Engine)
-- **Cakupan:** Data iklim bulanan per-kecamatan di Indonesia, 6.000 baris dan 18 kolom
-- **Target:** `new_label`, biner, diturunkan dari **PDSI (Palmer Drought Severity Index)**:
-  - `severe`: PDSI < -2 (kekeringan moderat hingga ekstrem)
-  - `mild`: PDSI >= -2 (kondisi mild hingga basah)
-- **Catatan label:** Threshold ini **terinspirasi skema Palmer (PDSI)** namun **disederhanakan menjadi biner** dengan cutoff yang dipilih untuk kebutuhan modeling, bukan replikasi tabel kategori Palmer asli.
+---
 
-## 🔍 Workflow
+## 📌 Overview
 
-1. **Setup & Load:** Memuat dataset TerraClimate.
-2. **Formatting & Labeling:** Membentuk label biner dari threshold PDSI, rename kolom agar interpretable, buat kolom `date`.
-3. **EDA:** Distribusi, missing value, outlier, korelasi antar fitur.
-4. **Preprocessing:** Pengembalian *scale factor* GEE, imputasi `kecamatan_id`, frequency encoding wilayah, IQR capping, `StandardScaler`.
-5. **Feature Engineering:** Feature creation berbasis domain knowledge (lihat di bawah).
-6. **Modeling:** Random Forest, Decision Tree, SVM (GridSearchCV + StratifiedKFold, scoring `f1_macro`).
-7. **Evaluation:** Accuracy, F1 macro, classification report, confusion matrix.
+Bushfire adalah salah satu hazard paling kritis di Australia. Sejak **15 Juli 2024**, Western Australia secara resmi mengadopsi **Australian Warning System (AWS)** yang menggunakan tiga tingkat peringatan bushfire: **Advice (kuning)**, **Watch and Act (oranye)**, dan **Emergency Warning (merah)**.
 
-## ⭐ Feature Engineering (Domain Knowledge)
+Project ini membangun pipeline klasifikasi multi-class yang memetakan kondisi lingkungan ke tingkat peringatan, mengikuti kerangka **CRISP-DM** dari *business understanding* hingga *evaluation*. Fokus utamanya bukan sekadar mengejar akurasi, tetapi menangani **class imbalance** secara serius (Emergency Warning jauh lebih jarang daripada Advice) dan **memperkaya sinyal prediktif lewat feature engineering**.
 
-Inti kontribusi project ini: **10 fitur turunan** dirancang dari prinsip hidrologi & klimatologi, bukan asal kombinasi kolom.
+**Tujuan:**
+- Mengklasifikasikan tingkat peringatan bushfire ke dalam 3 kelas (Advice, Watch and Act, Emergency Warning).
+- Menangani distribusi kelas yang timpang tanpa mengorbankan kelas minoritas (kelas paling berbahaya).
+- Menghasilkan model yang reproducible dan dapat dijalankan end-to-end di Google Colab.
 
-### Tier 1: Water Balance (berbasis indeks kekeringan dengan rujukan ilmiah)
+---
 
-| Fitur | Formula | Rasional | Rujukan |
-|---|---|---|---|
-| `water_balance` | precipitation - PET | Basis indeks **SPEI**; neraca air (defisit/surplus) | Vicente-Serrano et al. (2010) |
-| `aridity_index` | precipitation / PET | Rasio kekeringan iklim (P/PET) | UNEP (1992) |
-| `evaporative_stress` | AET / PET | Stres air vegetasi (**ESI/ESR**) | Anderson et al. (2007, 2011) |
-| `climatic_water_deficit` | PET - AET | Kekurangan air iklim (konsep CWD hidrologi) | n/a |
+## Dataset
 
-### Tier 2: Fitur Fisis & Logis (besaran standar / penalaran domain)
+| Item | Detail |
+|---|---|
+| **Region** | Perth, Western Australia |
+| **Jumlah baris** | 1.288 baris |
+| **Target** | Tingkat peringatan bushfire: **Advice**, **Watch and Act**, **Emergency Warning** (multi-class) |
+| **Tipe fitur** | Meteorologi, kekeringan, vegetasi/bahan bakar, dan topografi |
+| **Jumlah fitur final** | 18 fitur (setelah feature creation dan feature selection) |
 
-| Fitur | Formula | Rasional |
-|---|---|---|
-| `diurnal_temperature_range` | max_temp - min_temp | Amplitudo suhu harian; proksi kecerahan & kekeringan |
-| `relative_humidity_proxy` | VAP / (VAP + VPD) | Proksi kelembapan relatif (*custom*, tanpa rujukan kanonik) |
-| `runoff_ratio` | runoff / precipitation | Fraksi curah hujan yang menjadi limpasan |
-| `month_sin`, `month_cos` | sin/cos(2*pi*month/12) | *Cyclic encoding* musiman (bulan bersifat siklik) |
-| `monsoon_phase` | binning bulan | Fase monsun: barat (basah, Nov sampai Mar) / timur (kering, Mei sampai Sep) / transisi |
+Fitur mentah mencakup variabel meteorologi (`Rainfall`, `Maximum Temperature`, `RH_min`, `Sunshine`, serta waktu dan arah angin), indikator kekeringan (`DrySpellLength`, `AntecedentRain14`), kondisi bahan bakar/vegetasi (`dw_grass`), dan topografi (`Aspect`). Target berupa tingkat peringatan sesuai **Australian Warning System** sebagaimana diterapkan oleh DFES Western Australia.
 
-> ⚠️ `relative_humidity_proxy` adalah proksi buatan sendiri tanpa referensi ilmiah baku, disertakan apa adanya, tidak diklaim sebagai indeks resmi.
+---
 
-## 🛡️ Penanganan Leakage & Imbalance
+## Methodology (CRISP-DM)
 
-- **Anti-leakage:** `pdsi` **dibuang** dari fitur (karena label diturunkan darinya), begitu pula `drought_class`. Kolom `year` juga dibuang karena data hanya mencakup 2 tahun (risiko *temporal leakage*).
-- **Imbalance:** **Custom SMOTE** dengan *sampling strategy* per-kelas yang konservatif (kelas mayoritas tidak disentuh, minoritas di-boost terkontrol).
+1. **Business Understanding:** Memahami kebutuhan early-warning bushfire & dampak kesalahan klasifikasi kelas berbahaya.
+2. **Data Understanding:** Eksplorasi distribusi kelas, korelasi fitur meteorologi/kekeringan/vegetasi/topografi, dan deteksi class imbalance.
+3. **Data Preparation:** Cleaning, penanganan duplikat & outlier, encoding, scaling, dan **feature engineering** (lihat bagian Kontribusi). Feature selection menggunakan **Cramér's V** untuk fitur kategorikal dan uji statistik filter untuk fitur numerik, menyisakan 18 fitur.
+4. **Modeling:** Training beberapa model klasifikasi multi-class dengan penanganan imbalance via **custom SMOTE** (dalam `ImbPipeline`, sehingga oversampling hanya pada data training).
+5. **Evaluation:** Penilaian dengan metrik yang sensitif terhadap kelas minoritas (F1-score, precision, recall, bukan hanya accuracy).
+6. **Deployment (light):** Notebook reproducible yang bisa dijalankan ulang di Google Colab.
 
-## 🤖 Modeling & Hasil
+---
 
-> 📌 Metrik di bawah berasal dari run notebook saat ini. Jika threshold label diubah, jalankan ulang & perbarui tabel ini.
+## Contributions (Reference Paper)
 
-| Model | CV F1 Macro | Test Accuracy | Test F1 Macro |
-|---|---|---|---|
-| **Random Forest** ⭐ | 0.930 | **0.954** | **0.940** |
-| SVM | 0.907 | 0.940 | 0.927 |
-| Decision Tree | 0.905 | 0.941 | 0.926 |
+Bagian ini menjelaskan **apa yang saya kembangkan sendiri** di atas paper acuan Utamima et al. (2026). Paper tersebut menjadi *baseline / benchmark* konseptual; project ini menambahkan dua komponen orisinal.
 
-**Best model, Random Forest (per-kelas):**
+### 1. Feature Engineering, Feature Creation
+Saya menurunkan fitur-fitur baru dari variabel mentah untuk memperkuat sinyal prediktif terhadap tingkat peringatan:
+
+- **Cyclical encoding (sin/cos):** untuk variabel yang bersifat siklik, yaitu **bulan**, **jam (Time)**, **day-of-year**, **waktu hembusan angin maksimum**, dan **arah angin maksimum**. Encoding ini menjaga kontinuitas siklik (mis. Desember dekat dengan Januari) yang hilang jika dipakai sebagai angka biasa.
+- **Binning topografi:** `Aspect` (0 sampai 360 derajat) dikelompokkan menjadi arah mata angin (**North, East, South, West**).
+- **Binning musim & dekomposisi tanggal:** `month` dipetakan menjadi **season** (Summer, Autumn, Winter, Spring), serta ekstraksi komponen tanggal (year, day-of-year, day-of-week, dsb).
+
+Setelah feature selection, fitur cyclical hasil rekayasa ini (`time_sin/cos`, `doy_sin/cos`, `month_sin/cos`, `wind_sin/cos`) terpilih sebagai bagian dari 18 fitur final, menandakan kontribusinya terhadap model.
+
+### 2. Custom SMOTE Implementation
+Alih-alih memakai konfigurasi default, saya merancang **strategi oversampling per-kelas** yang konservatif agar kelas minoritas terangkat tanpa menghasilkan sampel sintetis berlebihan:
+
+- **ADVICE (mayoritas):** dibiarkan, 759 sampel.
+- **WATCH AND ACT (kelas tengah):** dinaikkan ke 60% mayoritas, 184 menjadi 455 sampel.
+- **EMERGENCY WARNING (kelas terkecil):** dinaikkan ke 40% mayoritas, 87 menjadi 303 sampel.
+
+SMOTE dijalankan **di dalam `ImbPipeline`**, sehingga hanya diterapkan pada fold training dan **tidak bocor** ke data test.
+
+> **Hubungan dengan paper acuan:** Paper Utamima et al. (2026) membingkai masalah ini sebagai klasifikasi multi-class atas kategori peringatan bushfire di Western Australia, dengan integrasi catatan peringatan resmi, observasi meteorologi, dan indikator kekeringan, evaluasi menggunakan *random split* dan *time-forward seasonal holdout*, serta **association rule mining** untuk relasi kondisi ke peringatan yang interpretable. Project saya mengambil framing multi-class yang sama tetapi menambahkan **feature creation** dan **custom SMOTE** sebagai kontribusi metodologis tersendiri.
+>
+> *Catatan transparansi:* paper acuan tidak secara eksplisit (pada bagian yang dapat saya verifikasi) menyebutkan SMOTE; penanganan imbalance lewat custom SMOTE ini adalah pendekatan saya, bukan replikasi langsung dari paper.
+
+---
+
+## Models & Results
+
+Tiga model utama dieksplorasi dengan **GridSearchCV** (StratifiedKFold 3-fold, scoring `f1_macro`):
+
+| Model | Test Accuracy | Test F1 Macro | Macro Precision | Macro Recall |
+|---|---|---|---|---|
+| **Random Forest** (best) | 0.89 | **0.82** | 0.83 | 0.81 |
+| XGBoost | 0.90 | 0.80 | 0.83 | 0.78 |
+| SVM | 0.80 | 0.67 | 0.66 | 0.68 |
+
+**Best model dipilih berdasarkan F1 Macro**, bukan accuracy, karena metrik ini lebih adil terhadap kelas minoritas. Meski XGBoost sedikit unggul di accuracy (0.90), **Random Forest** lebih kuat mengenali kelas berbahaya (recall Emergency Warning 0.77 vs 0.68 pada XGBoost).
+
+**Random Forest, rincian per-kelas:**
 
 | Kelas | Precision | Recall | F1-score | Support |
 |---|---|---|---|---|
-| mild | 0.96 | 0.98 | 0.97 | 847 |
-| severe | 0.94 | 0.89 | 0.91 | 315 |
+| Advice | 0.93 | 0.95 | 0.94 | 190 |
+| Watch and Act | 0.75 | 0.72 | 0.73 | 46 |
+| Emergency Warning | 0.81 | 0.77 | 0.79 | 22 |
 
-## 📝 Catatan & Limitasi
+Sebuah **stacking ensemble** (dengan tuning) juga dicoba, tetapi **tidak mengungguli** Random Forest (F1 Macro 0.74), sehingga Random Forest tetap menjadi model final.
 
-Fitur-fitur turunan dibangun dari variabel yang juga merupakan **komponen penyusun PDSI**, sedangkan label berasal dari PDSI. Karena itu, performa tinggi sebagian mencerminkan **rekonstruksi hubungan formula** PDSI, bukan murni prediksi kekeringan dari sinyal independen, sebuah trade-off yang disadari dan layak disebut secara jujur.
+---
 
-## ▶️ How to Run
+## How to Run
 
 Project dijalankan di **Google Colab**:
-1. Jalankan cell `files.upload()` lalu unggah `dataset_6000_rows_cols_dropped.csv`.
-2. Klik `Runtime`, lalu `Run all`.
 
-## 📚 References
+1. **Clone atau buka repositori**, lalu buka notebook di folder `notebooks/` melalui Google Colab.
+2. **Siapkan dataset.** Unggah `dataset-bushfires-p2.csv` (tersedia di folder `data/`) ke Colab. Notebook saat ini membaca dataset dari path Google Drive pribadi, jadi sesuaikan path pada `pd.read_csv(...)` agar menunjuk ke lokasi file Anda.
+3. **Jalankan semua cell:** klik `Runtime`, lalu `Run all`.
 
-> Palmer, W. C. (1965). *Meteorological Drought*. U.S. Weather Bureau, Research Paper No. 45. https://www.droughtmanagement.info/literature/USWB_Meteorological_Drought_1965.pdf
->
-> Vicente-Serrano, S. M., Beguería, S., & López-Moreno, J. I. (2010). A Multiscalar Drought Index Sensitive to Global Warming: The Standardized Precipitation Evapotranspiration Index (SPEI). *Journal of Climate*.
->
-> United Nations Environment Programme (UNEP). (1992). *World Atlas of Desertification*.
->
-> Anderson, M. C., et al. (2007, 2011). Evaporative Stress Index (ESI), thermal-based actual-to-potential evapotranspiration ratio for drought monitoring.
->
-> TerraClimate: Climatology Lab. https://www.climatologylab.org/terraclimate.html
+Sebagian besar dependency (pandas, numpy, scikit-learn, xgboost, imbalanced-learn) sudah tersedia secara default di Colab.
+
+---
+
+## Tech Stack
+
+- **Python 3.x**
+- **pandas**, **numpy**, untuk data wrangling & feature engineering
+- **scikit-learn**, untuk modeling & evaluation
+- **XGBoost**, untuk salah satu model kandidat
+- **imbalanced-learn**, untuk `ImbPipeline` & oversampling (custom SMOTE)
+- **Google Colab**, runtime environment
+
+---
+
+## References
+
+Paper acuan / benchmark project ini:
+
+> Utamima, A., Kanedi, F. J., & Sohel, F. (2026). Environmental drivers of bushfire warning categories: insights from official records, meteorology, and drought data in Western Australia. *Environmental Challenges, 23*, 101509. https://doi.org/10.1016/j.envc.2026.101509
+
+- Journal: *Environmental Challenges* (Elsevier), ISSN 2667-0100
+- Open Access (CC BY-NC 4.0)
+- ScienceDirect (PII): S2667010026001034
+
+Referensi pendukung (Australian Warning System):
+> Department of Fire and Emergency Services (DFES), Western Australia. *Australian Warning System.* https://www.dfes.wa.gov.au/hazard-information/warning-systems/australian-warning-system
+
+---
 
 ## 👤 Author
 
-**Muhammad Faishal Ardiansyah**, [@Ishalllll](https://github.com/Ishalllll)
+**Muhammad Faishal Ardiansyah**
+Information Systems Student @ Institut Teknologi Sepuluh Nopember (ITS), Surabaya
+Aspiring Data Scientist, interested in machine learning & data-driven decision making
+
+- GitHub: [@Ishalllll](https://github.com/Ishalllll)
+
+---
+
+## 📝 License
+
+Released under the **MIT License**.
+
+---
